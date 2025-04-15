@@ -8,6 +8,11 @@ import torchvision.transforms as transforms
 import numpy as np
 from tqdm.auto import tqdm
 
+import sys
+sys.path.append("cnn")  
+
+from model import CNNClassifier
+
 def validate_model(model, criterion, dataloader, device):
     model.eval()
     total_loss, correct, total = 0.0, 0, 0
@@ -56,13 +61,15 @@ def train(model,
         
         if epoch in log_epochs:
             val_error, val_loss = validate_model(model, criterion, vali_loader, device)
-            norm_value = model.compute_model_norm().item()
+            #norm_value = model.compute_model_norm().item()
+            norm_value = model.compute_spectral_complexity_ALT.item()
             
             # Get one batch from the validation loader.
             batch_val = next(iter(vali_loader))
             inputs_val, targets_val = batch_val
             inputs_val, targets_val = inputs_val.to(device), targets_val.to(device)
-            margins = model.compute_margin_distribution(inputs_val, targets_val)
+            #margins = model.compute_margin_distribution(inputs_val, targets_val)
+            margins = model.compute_margin_distribution_ALT(inputs_val, targets_val)
             margins_np = margins.cpu().numpy()
             
             log_val_error.append(val_error)
@@ -93,4 +100,37 @@ def train(model,
     return logs
 
 
-    
+# Set up device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(torch.cuda.is_available())
+
+# Load CIFAR-10 data with basic transforms
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
+
+dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+train_set, val_set = random_split(dataset, [40000, 10000])
+test_set = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+
+train_loader = DataLoader(train_set, batch_size=128, shuffle=True)
+vali_loader = DataLoader(val_set, batch_size=128)
+test_loader = DataLoader(test_set, batch_size=128)
+
+# Instantiate model, criterion, optimizer
+model = CNNClassifier(conv_channels = [3, 32, 64], kernel_size = 3, mlp_layers = [512, 128, 10]).to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+# Train for 10 epochs
+logs = train(
+    model=model,
+    train_loader=train_loader,
+    vali_loader=vali_loader,
+    test_loader=test_loader,
+    device=device,
+    optimizer=optimizer,
+    criterion=criterion,
+    T=10
+)
