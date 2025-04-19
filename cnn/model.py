@@ -198,3 +198,138 @@ class CNNClassifier(nn.Module):
             
             normalized_margins = raw_margins / scaling_factor
         return normalized_margins
+    
+    # ---------- Dario's magical comments ----------
+
+    # Explanation for why the Conv2d layer can be flattened
+
+    # A convolutional layer applies a linear transformation that maps the input feature maps 
+    # to output feature maps by performing a convolution operation. Although the weight tensor 
+    # of a Conv2d layer is 4-dimensional (with shape [out_channels, in_channels, kernel_h, kernel_w]), 
+    # we can 'flatten' it into a 2D matrix where each row corresponds to one output channel and 
+    # each column represents the weights applied to a local patch of the input (unfolded into a vector).
+
+    # This flattening is justified because the convolution operation can be equivalently formulated 
+    # as a matrix multiplication: by using an "im2col" operation, the convolution is transformed into 
+    # a multiplication between a large (but structured) matrix and the vectorized input. In both cases, 
+    # the linear mapping defined by the convolution has the same singular values. Thus, evaluating 
+    # the largest singular value of the flattened weight matrix provides the spectral norm of the 
+    # convolutional layer.
+
+    # Explanation for why the MaxPool layer is 1-Lipschitz:
+    #
+    # A non-overlapping max-pooling operation divides the input into disjoint patches and takes the maximum value
+    # within each patch. For any two input patches, the difference between the maximum values is bounded by the 
+    # largest difference between corresponding elements in the patches. This implies that, for each patch,
+    # |max(patch1) - max(patch2)| ≤ max(|x_i - y_i|) for x_i and y_i in the respective patches.
+    #
+    # Since the patches are non-overlapping, this bound holds independently for each patch. When the differences
+    # are aggregated (e.g., with the Euclidean norm across patches), the overall change in the pooled output is 
+    # no larger than the change in the input. Therefore, the max-pooling layer does not amplify the input 
+    # differences, making it 1-Lipschitz with respect to the l2 norm.
+
+    # Explanation for why the ReLU layer is 1-Lipschitz:
+    #
+    # |ReLU(x) - ReLU(y)| = |max(x, 0) - max(y, 0)| ≤ |x - y|
+
+    def compute_spectral_complexity_ALT(self):
+        """
+        Estimates the spectral complexity:
+        
+         R_A = (product of spectral norms)
+               * (Sum_i [||A_i^T||_{2,1}^{2/3} / ||A_i||_{sigma}^{2/3} ])^{3/2}
+
+        Here, we choose M_i = 0 for each layer.
+        """
+        # We track two things:
+        # 1) The product of spectral norms (prod_sn).
+        # 2) The sum over i of (||A_i^T||_{2,1} / ||A_i||_sigma^(2/3)).
+
+        prod_sn = 1.0
+        sum_ratio = 0.0
+
+        def matrix_21_norm(weight_matrix):
+            """
+            Computes the (2,1)-group norm of a 2D matrix:
+            sum of the Euclidean (L2) norms of each column.
+            """
+            # weight_matrix shape: [out_dim, in_dim]
+            col_norms = weight_matrix.norm(dim=0)  # L2 norm of each column
+            return col_norms.sum()
+
+        def spectral_norm_via_svd(weight_matrix):
+            """
+            Computes the largest singular value using torch.linalg.svdvals.
+            """
+            with torch.no_grad():
+                # Compute only the singular values (which are returned in descending order).
+                S = torch.linalg.svdvals(weight_matrix)
+            return S[0].item()  # Return the largest singular value.
+        
+        # ---- 1) Convolution layers ----
+        for module in self.features:
+            if isinstance(module, nn.Conv2d):
+                # Flatten to 2D: [out_channels, in_channels * kernel_h * kernel_w]
+                weight_2d = module.weight.data.view(module.out_channels, -1)
+                
+                sn = spectral_norm_via_svd(weight_2d)
+                prod_sn *= sn
+
+                # group (2,1) norm of A_i^T
+                norm_21 = matrix_21_norm(weight_2d.T)
+                
+                # Add ratio term
+                sum_ratio += float((norm_21 / (sn + 1e-12))**(2.0/3.0))
+
+        # ---- 2) MLP (Linear) layers ----
+        for module in self.classifier:
+            if isinstance(module, nn.Linear):
+                weight_2d = module.weight.data  # shape [out_features, in_features]
+                
+                sn = spectral_norm_via_svd(weight_2d)
+                prod_sn *= sn
+
+                norm_21 = matrix_21_norm(weight_2d)
+                if sn > 0:
+                    sum_ratio += float((norm_21 / (sn + 1e-12))**(2.0/3.0))
+        
+        # Final combination
+        spectral_complexity = prod_sn * (sum_ratio**(3.0/2.0))
+        return spectral_complexity
+    
+    def compute_margin_distribution_ALT(self, inputs, labels):
+        """
+        Computes the normalized margin distribution on a given batch.
+        
+        raw margin = f(x)_y - max_{j != y} f(x)_j
+        Normalized margin = (raw margin) / (R_{F_A} * (||X||_2 / n))
+
+        """
+        self.eval()
+        with torch.no_grad():
+            outputs = self(inputs)  # shape: (n, num_classes)
+            batch_size = outputs.size(0)
+            
+            # Gather the scores for the correct classes.
+            true_scores = outputs[torch.arange(batch_size), labels]
+
+            # Set the scores for the true class to -infinity to compute the max of the remaining classes.
+            outputs_clone = outputs.clone()
+            outputs_clone[torch.arange(batch_size), labels] = -float('inf')
+            max_incorrect = outputs_clone.max(dim=1)[0]
+            
+            raw_margins = true_scores - max_incorrect
+            
+            # Compute the model norm.
+            model_complexity = self.compute_spectral_complexity_ALT
+            
+            # Compute the Frobenius norm of the input batch.
+            X_flat = inputs.view(batch_size, -1)
+            X_norm = torch.norm(X_flat, p=2)
+            
+            # Denominator: R_{F_A} * (||X||_F / n)
+            scaling_factor = model_complexity * (X_norm / batch_size + 1e-12)
+            
+            normalized_margins = raw_margins / scaling_factor
+            
+        return normalized_margins
