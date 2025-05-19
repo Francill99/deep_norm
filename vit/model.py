@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ---------- building blocks --------------------------------------------------
 class TransformerBlock(nn.Module):
     """
     Single ViT block: LN → MHSA → residual → LN → GELU‑MLP → residual
@@ -32,7 +31,7 @@ class TransformerBlock(nn.Module):
         x = x + self.mlp(y)                # second residual
         return x
 
-# ---------- ViT classifier ----------------------------------------------------
+
 class ViT(nn.Module):
     """
     Vision Transformer with Bartlett‑style spectral complexity + margin utils.
@@ -84,7 +83,6 @@ class ViT(nn.Module):
                 nn.init.zeros_(m.bias)
                 nn.init.ones_(m.weight)
 
-    # ---------------------------- forward -------------------------------------
     def forward(self, x):
         B = x.size(0)
         x = self.patch_embed(x)                 # (B, C, H', W')
@@ -98,10 +96,6 @@ class ViT(nn.Module):
         x = self.norm(x)
         return self.head(x[:, 0])               # class token only
 
-    # ----------------------- complexity (spectral norm) -----------------------
-    # ------------------------------------------------------------------ #
-    # 64‑bit helpers – used *only* inside compute_model_norm()           #
-    # ------------------------------------------------------------------ #
     @staticmethod
     def _spectral_norm(w: torch.Tensor) -> torch.Tensor:
         """Largest singular value ‖A‖σ computed in float64 on the same device."""
@@ -138,9 +132,7 @@ class ViT(nn.Module):
         R = prod_spec * (correction ** 1.5)                                # fp64
         return R.to(dtype=dtype_out)            
 
-    # ------------------------------------------------------------------ #
-    #  log‑space   spectral complexity  (never overflows)                #
-    # ------------------------------------------------------------------ #
+
     @torch.no_grad()
     def compute_model_norm(self) -> torch.Tensor:
         """
@@ -153,7 +145,7 @@ class ViT(nn.Module):
             logs.append(torch.log(s))              # log s_i
             terms.append((t ** (2/3)) / (s ** (2/3) + 1e-12))
 
-        log_prod = torch.stack(logs).sum()         # Σ log s_i
+        log_prod = torch.stack(logs).sum()       
         log_corr = torch.log( torch.stack(terms).sum() + 1e-12 )
         return log_prod + 1.5 * log_corr           # log R
 
@@ -184,7 +176,6 @@ class ViT(nn.Module):
         # 3) classification head
         yield self.head.weight
 
-    # ------------------------ margin distribution -----------------------------
     @torch.no_grad()
     def compute_margin_distribution(self, inputs, labels):
         """

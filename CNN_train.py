@@ -57,10 +57,6 @@ def set_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
-# -----------------------------------------------------------------------------
-# Dataset utilities
-# -----------------------------------------------------------------------------
-
 def get_transforms(name: str):
     if name == "MNIST":
         return transforms.Compose([
@@ -130,49 +126,45 @@ def compute_random_margins(model: nn.Module, dataset, P_margins: int, device: st
             margins.append(m.cpu())
     return torch.cat(margins, dim=0).numpy()
 
-# -----------------------------------------------------------------------------
-# Model factory
-# -----------------------------------------------------------------------------
 
 def build_model(input_size, num_classes, device, dataset):
     """
     Dataset-specific CNNs tuned for best offline baselines:
-      • CIFAR-10: 3 conv-blocks with 32→64→128 filters, moderate dropout
+      • CIFAR-10 or MNIST: 3 conv-blocks with 32→64→128 filters, moderate dropout
       • CIFAR-100: 4 conv-blocks with 64→128→256→512 filters, stronger dropout
       • TinyImageNet: 4 conv-blocks (32→32→64→64→128), heavy FC head + high dropout
     """
     c_in = input_size[0]
 
     if dataset == "CIFAR10" or dataset== "MNIST":
-        # Two conv layers per pooling block; pool every 2 convs
         model = CNNClassifier(
-            conv_channels=[c_in, 32, 64, 128],    # 3 blocks: 32→64→128 filters :contentReference[oaicite:0]{index=0}
+            conv_channels=[c_in, 32, 64, 128],    
             kernel_size=3,
-            mlp_layers=[512, num_classes],        # 512-dim hidden → 10 classes
-            pool_every=2,                         # pool after every 2 convs :contentReference[oaicite:1]{index=1}
-            dropout=0.,                          # 30% dropout (best at 20–40%) :contentReference[oaicite:2]{index=2}
+            mlp_layers=[512, num_classes],        
+            pool_every=2,                        
+            dropout=0.,                          
             input_size=input_size,
         ).to(device)
 
     elif dataset == "CIFAR100":
-        # Four conv blocks, doubling channels each time
+       
         model = CNNClassifier(
-            conv_channels=[c_in, 64, 128, 256, 512],  # 4 blocks :contentReference[oaicite:3]{index=3}
+            conv_channels=[c_in, 64, 128, 256, 512],  
             kernel_size=3,
-            mlp_layers=[1024, 512, num_classes],     # wider FC for 100-way
-            pool_every=2,                            # pool every two conv layers :contentReference[oaicite:4]{index=4}
-            dropout=0.1,                             # stronger dropout for 100 classes :contentReference[oaicite:5]{index=5}
+            mlp_layers=[1024, 512, num_classes],     
+            pool_every=2,                            
+            dropout=0.1,                             
             input_size=input_size,
         ).to(device)
 
     elif dataset == "TINYIMAGENET":
-        # TinyImageNet baseline (Stanford CS231n M4 style) :contentReference[oaicite:6]{index=6}
+       
         model = CNNClassifier(
-            conv_channels=[c_in, 32, 32, 64, 64, 128],  # M4: 32→32→64→64→128 filters :contentReference[oaicite:7]{index=7}
+            conv_channels=[c_in, 32, 32, 64, 64, 128],  
             kernel_size=3,
-            mlp_layers=[2048, 1024, 512, num_classes],  # deep head for 200-way
-            pool_every=2,                              # as in M4 architecture :contentReference[oaicite:8]{index=8}
-            dropout=0.2,                               # 50% dropout on FC layers :contentReference[oaicite:9]{index=9}
+            mlp_layers=[2048, 1024, 512, num_classes],  
+            pool_every=2,                              
+            dropout=0.2,                               
             input_size=input_size,
         ).to(device)
 
@@ -180,11 +172,6 @@ def build_model(input_size, num_classes, device, dataset):
         raise ValueError(f"Unknown dataset {dataset!r}")
 
     return model
-
-
-# -----------------------------------------------------------------------------
-# Training logic
-# -----------------------------------------------------------------------------
 
 def main():
     args = parse_args()

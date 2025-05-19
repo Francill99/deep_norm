@@ -5,15 +5,10 @@ train_vit.py
 Train a lightweight Vision‑Transformer (ViT) on CIFAR‑10, CIFAR‑100
 or Tiny‑ImageNet using only P training samples for T epochs.
 
-The CLI and logging behaviour mirror train_model.py so you can swap
-scripts without touching your pipelines.
-
 Example:
     python train_vit.py --device cuda:0 --P 5000 --T 600 --lr 3e-4 --dataset CIFAR10
 """
-# -----------------------------------------------------------------------------#
-# Imports
-# -----------------------------------------------------------------------------#
+
 import argparse
 import os
 from pathlib import Path
@@ -28,13 +23,9 @@ import torchvision
 from torchvision.datasets import ImageFolder
 import torchvision.transforms as transforms
 
-# our code
-from deep_norm.vit.model import ViT                 # the class defined earlier
+from deep_norm.vit.model import ViT                 
 from deep_norm.train.training import train
 
-# -----------------------------------------------------------------------------#
-# CLI
-# -----------------------------------------------------------------------------#
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--device",    default="cuda:0")
@@ -57,9 +48,6 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
-# -----------------------------------------------------------------------------#
-# Dataset utilities (identical to train_model.py)
-# -----------------------------------------------------------------------------#
 def load_datasets(name: str, root: str, transform):
     """
     Return (train_ds, test_ds, input_size_tuple, num_classes)
@@ -70,7 +58,6 @@ def load_datasets(name: str, root: str, transform):
     """
     root = Path(root)
 
-    # ------------------------------- MNIST ------------------------------------
     if name == "MNIST":
         tr = torchvision.datasets.MNIST(
             root, train=True,  download=False, transform=transform
@@ -80,7 +67,6 @@ def load_datasets(name: str, root: str, transform):
         )
         return tr, te, (1, 28, 28), 10
 
-    # ----------------------------- CIFAR‑10 -----------------------------------
     if name == "CIFAR10":
         tr = torchvision.datasets.CIFAR10(
             root, train=True,  download=False, transform=transform
@@ -90,7 +76,6 @@ def load_datasets(name: str, root: str, transform):
         )
         return tr, te, (3, 32, 32), 10
 
-    # ----------------------------- CIFAR‑100 ----------------------------------
     if name == "CIFAR100":
         tr = torchvision.datasets.CIFAR100(
             root, train=True,  download=False, transform=transform
@@ -99,8 +84,7 @@ def load_datasets(name: str, root: str, transform):
             root, train=False, download=False, transform=transform
         )
         return tr, te, (3, 32, 32), 100
-
-    # --------------------------- Tiny‑ImageNet --------------------------------
+    
     if name == "TINYIMAGENET":
         base  = os.path.join(root, "tiny-imagenet-200")
         trdir = os.path.join(base, "train")
@@ -109,7 +93,7 @@ def load_datasets(name: str, root: str, transform):
         te = ImageFolder(valim, transform=transform)
         return tr, te, (3, 64, 64), 200
 
-    # -------------------------------------------------------------------------
+
     raise ValueError(f"Unknown dataset '{name}'.")
 
 def get_transforms(name: str):
@@ -143,9 +127,6 @@ def get_transforms(name: str):
 
     raise ValueError(f"Unknown dataset '{name}'.")
 
-# -----------------------------------------------------------------------------#
-# Model factory – dataset‑specific, **lightweight** ViTs
-# -----------------------------------------------------------------------------#
 def build_model(input_size, num_classes, device, dataset):
     """
     Hyper‑parameters chosen to keep the model count <≈ 10 M while maintaining
@@ -156,9 +137,9 @@ def build_model(input_size, num_classes, device, dataset):
 
     if dataset == "MNIST":
         model = ViT(
-            image_size = H,    # 28
-            patch_size = 7,    # 4×4 = 16 tokens
-            in_chans   = c,    # 1 channel
+            image_size = H,    
+            patch_size = 7,    
+            in_chans   = c,    
             embed_dim  = 128,
             depth      = 4,
             num_heads  = 4,
@@ -168,21 +149,21 @@ def build_model(input_size, num_classes, device, dataset):
         ).to(device)
         
     elif dataset == "CIFAR10":
-        # 8×8 patches → 4×4 tokens (plus class) –> 6‑layer encoder
+        
         model = ViT(image_size=H, patch_size=4, in_chans=c,
                     embed_dim=192, depth=6, num_heads=3,
                     mlp_ratio=4, dropout=0.,
                     num_classes=num_classes).to(device)
 
     elif dataset == "CIFAR100":
-        # Slightly wider/deeper – still <8 M params
+   
         model = ViT(image_size=H, patch_size=4, in_chans=c,
                     embed_dim=256, depth=6, num_heads=4,
                     mlp_ratio=4, dropout=0.,
                     num_classes=num_classes).to(device)
 
     elif dataset == "TINYIMAGENET":
-        # 8×8 patches on 64×64 images (64 tokens) – small ViT
+ 
         model = ViT(image_size=H, patch_size=4, in_chans=c,
                     embed_dim=384, depth=6, num_heads=6,
                     mlp_ratio=4, dropout=0.,
@@ -191,9 +172,7 @@ def build_model(input_size, num_classes, device, dataset):
         raise ValueError(dataset)
     return model
 
-# -----------------------------------------------------------------------------#
-# Training script (unchanged except for model factory)
-# -----------------------------------------------------------------------------#
+
 def main():
     args   = parse_args()
     device = torch.device(args.device if ("cuda" in args.device and
@@ -204,7 +183,7 @@ def main():
     tr_ds, te_ds, input_size, num_classes = load_datasets(
         args.dataset, args.data_root, transform)
 
-    # train/val split
+
     P = min(args.P, len(tr_ds))
     tr_size, val_size = P, len(tr_ds) - P
     train_set, val_set = random_split(tr_ds, [tr_size, val_size])

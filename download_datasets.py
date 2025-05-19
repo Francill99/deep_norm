@@ -32,7 +32,6 @@ def download_tiny(root):
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(root)
     os.remove(zip_path)
-    # --- Reorganize validation images into class subfolders ---
     val_dir = os.path.join(dst, "val")
     images_dir = os.path.join(val_dir, "images")
     annot_file = os.path.join(val_dir, "val_annotations.txt")
@@ -82,9 +81,8 @@ def reorganize_tiny_val(root="data/tiny-imagenet-200"):
     if not os.path.exists(images_dir) or not os.path.isfile(anno_path):
         raise FileNotFoundError("val/images or val_annotations.txt not found.")
 
-    print(f"🛠️ Reorganizing TinyImageNet validation set at {val_dir}")
+    print(f"Reorganizing TinyImageNet validation set at {val_dir}")
 
-    # Make class folders and move images into them
     with open(anno_path) as f:
         for line in f:
             img, cls = line.strip().split("\t")[:2]
@@ -95,7 +93,7 @@ def reorganize_tiny_val(root="data/tiny-imagenet-200"):
             if os.path.exists(src):
                 shutil.move(src, dst)
 
-    print("✅ Validation images moved into class folders.")
+    print("Validation images moved into class folders.")
 
 if __name__=="__main__":
     main()

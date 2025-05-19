@@ -4,10 +4,6 @@ from typing import List, Type, Tuple, Optional
 
 __all__ = ["BasicBlock", "ResNetClassifier"]
 
-# -----------------------------------------------------------------------------
-# Building blocks
-# -----------------------------------------------------------------------------
-
 class BasicBlock(nn.Module):
     """Standard 3×3 residual block for ResNet‑18/34.
 
@@ -25,7 +21,7 @@ class BasicBlock(nn.Module):
         Drop prob applied after first ReLU (helps Tiny‑ImageNet).
     """
 
-    expansion: int = 1  # multiplier for planes when computing out_planes
+    expansion: int = 1  
 
     def __init__(
         self,
@@ -45,7 +41,6 @@ class BasicBlock(nn.Module):
                                padding=1, bias=False)
         self.bn2 = norm_layer(planes)
 
-        # Projection for the residual path when we change spatial dims / channels
         self.downsample = None
         if stride != 1 or in_planes != planes:
             self.downsample = nn.Sequential(
@@ -54,7 +49,7 @@ class BasicBlock(nn.Module):
             )
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x):  # noqa: D401
+    def forward(self, x): 
         identity = x
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.drop(out)
@@ -63,13 +58,9 @@ class BasicBlock(nn.Module):
         if self.downsample is not None:
             identity = self.downsample(identity)
 
-        out += identity  # residual add (1‑Lipschitz)
+        out += identity  
         return self.relu(out)
 
-
-# -----------------------------------------------------------------------------
-# ResNet for CIFAR‑10/100 & Tiny‑ImageNet
-# -----------------------------------------------------------------------------
 
 class ResNetClassifier(nn.Module):
     """Flexible ResNet classifier with spectral‑complexity utilities.
@@ -110,7 +101,7 @@ class ResNetClassifier(nn.Module):
 
         self.in_planes = widths[0]
         self.stages = nn.ModuleList()
-        strides = [1, 2, 2, 2]  # Down‑sampling pattern (CIFAR/Tiny‑ImageNet‑style)
+        strides = [1, 2, 2, 2]  
         for idx, (num_blocks, planes, stride) in enumerate(zip(layers, widths, strides)):
             stage = self._make_stage(block, planes, num_blocks, stride, norm_layer, dropout)
             self.stages.append(stage)
@@ -118,7 +109,6 @@ class ResNetClassifier(nn.Module):
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(widths[-1] * block.expansion, num_classes)
 
-        # Weight initialisation (He/Kaiming normal)
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -128,12 +118,11 @@ class ResNetClassifier(nn.Module):
         nn.init.normal_(self.fc.weight, std=0.01)
         nn.init.zeros_(self.fc.bias)
 
-        # Cache spectral and (2,1) norms per layer for fast norm computation
+    
         self._weighted_layers: List[nn.Module] = [self.stem[0]]
         self._weighted_layers += [m for stage in self.stages for m in stage if isinstance(m, nn.Conv2d)]
         self._weighted_layers.append(self.fc)
 
-    # ------------------------------------------------------------------ helpers
 
     def _make_stage(
         self,
@@ -150,16 +139,13 @@ class ResNetClassifier(nn.Module):
             layers.append(block(self.in_planes, planes, stride=1, norm_layer=norm_layer, dropout=dropout))
         return nn.Sequential(*layers)
 
-    # ------------------------------------------------------------------ forward
-
-    def forward(self, x):  # noqa: D401
+    def forward(self, x):  
         x = self.stem(x)
         for stage in self.stages:
             x = stage(x)
         x = self.pool(x).flatten(1)
         return self.fc(x)
 
-    # ------------------------------------------------------------------ Bartlett et al. spectral complexity utilities
 
     @staticmethod
     def _spectral_norm(weight: torch.Tensor) -> torch.Tensor:
@@ -195,7 +181,6 @@ class ResNetClassifier(nn.Module):
         correction_sum = torch.sum(torch.stack(correction_sum))
         return prod_spec * (correction_sum ** (3.0 / 2.0))
 
-    # ------------------------------------------------------------------ margin utilities
 
     def compute_margin_distribution(
         self, inputs: torch.Tensor, labels: torch.Tensor

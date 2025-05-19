@@ -26,15 +26,9 @@ import torchvision
 from torchvision.datasets import ImageFolder
 import torchvision.transforms as transforms
 
-# -----------------------------------------------------------------------------
-# Deep‑norm imports – adjust the dotted path to match your project layout
-# -----------------------------------------------------------------------------
-from deep_norm.resnet.model import ResNetClassifier, BasicBlock  # noqa: E402
-from deep_norm.train.training import train  # noqa: E402
+from deep_norm.resnet.model import ResNetClassifier, BasicBlock  
+from deep_norm.train.training import train  
 
-# -----------------------------------------------------------------------------
-# CLI helpers
-# -----------------------------------------------------------------------------
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -65,10 +59,6 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-
-# -----------------------------------------------------------------------------
-# Dataset utilities
-# -----------------------------------------------------------------------------
 
 def get_transforms(name: str):
     if name == "MNIST":
@@ -131,10 +121,6 @@ def load_datasets(name: str, root: str, transform):
 
     raise ValueError
 
-# -----------------------------------------------------------------------------
-# Hyper‑parameter presets
-# -----------------------------------------------------------------------------
-
 def dataset_presets(name: str):
     """Return (layers, widths, epochs, lr, batch_size, weight_decay, dropout)."""
     if name == "CIFAR10" or name== "MNIST":
@@ -144,10 +130,6 @@ def dataset_presets(name: str):
     if name == "TINYIMAGENET":
         return ([3, 4, 6, 3], [64, 128, 256, 512], 150, 3e-4, 256, 1e-4, 0.0)
     raise ValueError
-
-# -----------------------------------------------------------------------------
-# Model factory
-# -----------------------------------------------------------------------------
 
 def build_model(
     input_size: Tuple[int, int, int],
@@ -166,17 +148,12 @@ def build_model(
     ).to(device)
     return model
 
-# -----------------------------------------------------------------------------
-# Training logic
-# -----------------------------------------------------------------------------
-
 def main():
     args = parse_args()
     device = torch.device(args.device if ("cuda" in args.device and torch.cuda.is_available()) else "cpu")
 
     set_seed(args.seed)
 
-    # fetch dataset‑specific presets
     layers, widths, _, _, batch_size, _, _ = dataset_presets(args.dataset)
     epochs = args.T
     lr = args.lr 
@@ -184,7 +161,6 @@ def main():
     transform = get_transforms(args.dataset)
     train_ds, test_ds, input_size, num_classes = load_datasets(args.dataset, args.data_root, transform)
 
-    # Train/validation split
     p = min(args.P, len(train_ds))
     train_size, val_size = p, len(train_ds) - p
     train_set, val_set = random_split(train_ds, [train_size, val_size])

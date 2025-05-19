@@ -28,45 +28,38 @@ class CNNClassifier(nn.Module):
           input_size (tuple): Input dimensions as (channels, height, width).
         """
         super(CNNClassifier, self).__init__()
-        
-        # --- Build the convolutional block ---
+
         conv_layers = []
         in_channels = conv_channels[0]
         for i, out_channels in enumerate(conv_channels[1:]):
             conv_layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, 
                                          padding=kernel_size // 2))
             conv_layers.append(nn.ReLU(inplace=True))
-            # Insert pooling layer every 'pool_every' conv layer(s)
             if (i + 1) % pool_every == 0:
                 conv_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
             in_channels = out_channels
         self.features = nn.Sequential(*conv_layers)
         
-        # Determine the number of features after the conv block using a dummy forward pass.
         with torch.no_grad():
             dummy_input = torch.zeros(1, *input_size)
             feat = self.features(dummy_input)
             self.flatten_dim = feat.view(1, -1).size(1)
-        
-        # --- Build the MLP (classifier) block ---
+
         mlp_layers_list = []
         prev_dim = self.flatten_dim
-        # Add hidden layers with Linear, ReLU and dropout.
+
         for h in mlp_layers[:-1]:
             mlp_layers_list.append(nn.Linear(prev_dim, h))
             mlp_layers_list.append(nn.ReLU(inplace=True))
             if dropout > 0:
                 mlp_layers_list.append(nn.Dropout(dropout))
             prev_dim = h
-        # Final layer (without activation) for classification.
         mlp_layers_list.append(nn.Linear(prev_dim, mlp_layers[-1]))
         self.classifier = nn.Sequential(*mlp_layers_list)
         
     def forward(self, x):
-        # Pass through convolutional features.
         x = self.features(x)
-        x = x.view(x.size(0), -1)  # flatten
-        # Pass through classifier (MLP).
+        x = x.view(x.size(0), -1) 
         x = self.classifier(x)
         return x
 
@@ -91,7 +84,6 @@ class CNNClassifier(nn.Module):
           A scalar tensor representing the spectral complexity.
         """
         def spectral_norm(weight):
-            # For convolutional weights, reshape to (out_channels, -1)
             if weight.ndim > 2:
                 w = weight.view(weight.size(0), -1)
             else:
@@ -104,11 +96,9 @@ class CNNClassifier(nn.Module):
                 w = weight.view(weight.size(0), -1)
             else:
                 w = weight
-            # Sum of the \(\ell_2\) norms over columns.
             col_norms = torch.norm(w, p=2, dim=0)
             return torch.sum(col_norms)
         
-        # Gather all modules with weights (Conv2d and Linear) from features and classifier.
         weighted_layers = []
         for module in list(self.features) + list(self.classifier):
             if isinstance(module, (nn.Conv2d, nn.Linear)):
@@ -131,12 +121,10 @@ class CNNClassifier(nn.Module):
         
         correction_sum = torch.tensor(0.0, device=prod_spec.device)
         for i in range(L):
-            # For layer i, approximate \(\|A_{>i}\|_{2,1}\) by summing the (2,1)-norms of subsequent layers.
             if i < L - 1:
                 t_sum = sum(t_list[i+1:])
             else:
                 t_sum = torch.tensor(0.0, device=prod_spec.device)
-            # Avoid division by zero.
             s_i = s_list[i] if s_list[i] > 0 else torch.tensor(1e-12, device=prod_spec.device)
             term = (t_sum ** (2.0/3.0)) / (s_i ** (2.0/3.0))
             correction_sum = correction_sum + term
@@ -177,60 +165,24 @@ class CNNClassifier(nn.Module):
             outputs = self(inputs)  # shape: (n, num_classes)
             batch_size = outputs.size(0)
             
-            # Gather the scores for the correct classes.
             true_scores = outputs[torch.arange(batch_size), labels]
-            # Set the scores for the true class to -infinity to compute the max of the remaining classes.
+            
             outputs_clone = outputs.clone()
             outputs_clone[torch.arange(batch_size), labels] = -float('inf')
             max_incorrect = outputs_clone.max(dim=1)[0]
             
             raw_margins = true_scores - max_incorrect
-            
-            # Compute the model norm.
+
             model_norm = self.compute_model_norm()
             
-            # Compute the Frobenius norm of the input batch.
             X_flat = inputs.view(batch_size, -1)
             X_norm = torch.norm(X_flat, p=2)
             
-            # Denominator: R_{F_A} * (||X||_F / n)
             scaling_factor = model_norm * (X_norm / batch_size + 1e-12)
             
             normalized_margins = raw_margins / scaling_factor
         return normalized_margins
     
-    # ---------- Dario's magical comments ----------
-
-    # Explanation for why the Conv2d layer can be flattened
-
-    # A convolutional layer applies a linear transformation that maps the input feature maps 
-    # to output feature maps by performing a convolution operation. Although the weight tensor 
-    # of a Conv2d layer is 4-dimensional (with shape [out_channels, in_channels, kernel_h, kernel_w]), 
-    # we can 'flatten' it into a 2D matrix where each row corresponds to one output channel and 
-    # each column represents the weights applied to a local patch of the input (unfolded into a vector).
-
-    # This flattening is justified because the convolution operation can be equivalently formulated 
-    # as a matrix multiplication: by using an "im2col" operation, the convolution is transformed into 
-    # a multiplication between a large (but structured) matrix and the vectorized input. In both cases, 
-    # the linear mapping defined by the convolution has the same singular values. Thus, evaluating 
-    # the largest singular value of the flattened weight matrix provides the spectral norm of the 
-    # convolutional layer.
-
-    # Explanation for why the MaxPool layer is 1-Lipschitz:
-    #
-    # A non-overlapping max-pooling operation divides the input into disjoint patches and takes the maximum value
-    # within each patch. For any two input patches, the difference between the maximum values is bounded by the 
-    # largest difference between corresponding elements in the patches. This implies that, for each patch,
-    # |max(patch1) - max(patch2)| ≤ max(|x_i - y_i|) for x_i and y_i in the respective patches.
-    #
-    # Since the patches are non-overlapping, this bound holds independently for each patch. When the differences
-    # are aggregated (e.g., with the Euclidean norm across patches), the overall change in the pooled output is 
-    # no larger than the change in the input. Therefore, the max-pooling layer does not amplify the input 
-    # differences, making it 1-Lipschitz with respect to the l2 norm.
-
-    # Explanation for why the ReLU layer is 1-Lipschitz:
-    #
-    # |ReLU(x) - ReLU(y)| = |max(x, 0) - max(y, 0)| ≤ |x - y|
 
     def compute_spectral_complexity_ALT(self):
         """
@@ -241,10 +193,6 @@ class CNNClassifier(nn.Module):
 
         Here, we choose M_i = 0 for each layer.
         """
-        # We track two things:
-        # 1) The product of spectral norms (prod_sn).
-        # 2) The sum over i of (||A_i^T||_{2,1} / ||A_i||_sigma^(2/3)).
-
         prod_sn = 1.0
         sum_ratio = 0.0
 
@@ -253,7 +201,6 @@ class CNNClassifier(nn.Module):
             Computes the (2,1)-group norm of a 2D matrix:
             sum of the Euclidean (L2) norms of each column.
             """
-            # weight_matrix shape: [out_dim, in_dim]
             col_norms = weight_matrix.norm(dim=0)  # L2 norm of each column
             return col_norms.sum()
 
@@ -262,11 +209,10 @@ class CNNClassifier(nn.Module):
             Computes the largest singular value using torch.linalg.svdvals.
             """
             with torch.no_grad():
-                # Compute only the singular values (which are returned in descending order).
                 S = torch.linalg.svdvals(weight_matrix)
             return S[0].item()  # Return the largest singular value.
         
-        # ---- 1) Convolution layers ----
+
         for module in self.features:
             if isinstance(module, nn.Conv2d):
                 # Flatten to 2D: [out_channels, in_channels * kernel_h * kernel_w]
@@ -281,7 +227,6 @@ class CNNClassifier(nn.Module):
                 # Add ratio term
                 sum_ratio += float((norm_21 / (sn + 1e-12))**(2.0/3.0))
 
-        # ---- 2) MLP (Linear) layers ----
         for module in self.classifier:
             if isinstance(module, nn.Linear):
                 weight_2d = module.weight.data  # shape [out_features, in_features]
