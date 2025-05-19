@@ -34,8 +34,8 @@ def train(model,
         P,
         T):
 
-    # Create 20 logging epochs in a logspace from 1 to 1000.
-    log_epochs = np.unique(np.logspace(np.log10(1), np.log10(T), num=30, dtype=int))
+    # Create 50 logging epochs in a logspace from 1 to 1000.
+    log_epochs = np.unique(np.logspace(np.log10(1), np.log10(T), num=50, dtype=int))
     print("Logging at epochs:", log_epochs)
     
     # Lists to store logged data.
@@ -44,7 +44,7 @@ def train(model,
     log_val_error = []
     log_val_loss  = []
     log_model_norm = []
-    log_margins = []  # Each element is a numpy array of margin values from one validation batch.
+    #log_margins = []  # Each element is a numpy array of margin values from one validation batch.
     
     # Main training loop.
     for epoch in range(1, T + 1):
@@ -64,22 +64,23 @@ def train(model,
             norm_value = model.compute_model_norm().item()
             
             # Get one batch from the train loader.
+            '''
             margins_np = np.array([])
             for inputs, targets in train_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
             
                 margins = model.compute_margin_distribution(inputs, targets)
                 margins_np = np.append(margins_np, margins.cpu().numpy())
-            
+            '''
             log_train_error.append(train_error)
             log_val_error.append(val_error)
             log_train_loss.append(train_loss)
             log_val_loss.append(val_loss)
             log_model_norm.append(norm_value)
-            log_margins.append(margins_np)
+            #log_margins.append(margins_np)
             
             print(f"P:{P} Epoch {epoch}: Train Error = {train_error:.2f}%, Val Error = {val_error:.2f}%, Val Loss = {val_loss:.4f}, "
-                  f"Model Norm = {norm_value:.4f}, Margin Mean = {margins_np.mean():.4e}, Margin Min = {margins.min():.4e}")
+                  f"Model Norm = {norm_value:.4f}")
     
     # Evaluate on test set at the end.
     test_error, test_loss = validate_model(model, criterion, test_loader, device)
@@ -95,12 +96,12 @@ def train(model,
     
     logs = {
         "log_epochs": log_epochs,
-        "train_error": log_val_error,
-        "train_loss": log_val_loss,
+        "train_error": log_train_error,
+        "train_loss": log_train_loss,
         "val_error": log_val_error,
         "val_loss": log_val_loss,
-        "model_norm": log_model_norm,
-        "margins": log_margins
+        "model_norm": log_model_norm
+        #"margins": log_margins
     }
     return logs
 
