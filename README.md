@@ -1,6 +1,6 @@
 # Implicit bias produces neural scaling laws in learning curves, from perceptrons to deep networks
 
-
+This repository is the official implementation of (https://arxiv.org/abs/2505.13230). 
 
 ## Requirements
 
