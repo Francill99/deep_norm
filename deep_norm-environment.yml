@@ -1,0 +1,5 @@
+name: deep_norm
+channels:
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+prefix: /home/2a/mn5223/miniconda3/envs/deep_norm
