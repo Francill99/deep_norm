@@ -22,3 +22,7 @@ To train a single run of a model and dataset used in the paper, run this command
 python CNN_train.py --P 48000 --T 500 --lr 1e-3 --seed 11130 --dataset CIFAR10 --data_root ./data --out_dir <select_directory> 
 ```
 To obtain the curves in the paper it is necessary to run for different P values and seed choices.
+
+## Results presented in the paper
+
+All data necessary to reproduces curves of experiments in deep networks are reproducible via the aggregated curves over many seeds in folder ./analysis
