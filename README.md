@@ -1,5 +1,3 @@
->📋  A template README.md for code accompanying a Machine Learning paper
-
 # Implicit bias produces neural scaling laws in learning curves, from perceptrons to deep networks
 
 This repository is the official implementation of (https://arxiv.org/abs/2505.13230). 
