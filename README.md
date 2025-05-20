@@ -25,4 +25,4 @@ To obtain the curves in the paper it is necessary to run for different P values 
 
 ## Results presented in the paper
 
-All data necessary to reproduces curves of experiments in deep networks are reproducible via the aggregated curves over many seeds in folder ./analysis
+All data necessary to reproduces curves of experiments in deep networks are reproducible via the aggregated curves over many seeds in folder ./analysis. The plots in the paper are reported in the notebook Graphs_deep_networks_experiments.ipynb
