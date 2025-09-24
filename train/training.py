@@ -95,8 +95,8 @@ def train(model,
     
     logs = {
         "log_epochs": log_epochs,
-        "train_error": log_val_error,
-        "train_loss": log_val_loss,
+        "train_error": log_train_error,
+        "train_loss": log_train_loss,
         "val_error": log_val_error,
         "val_loss": log_val_loss,
         "model_norm": log_model_norm,
