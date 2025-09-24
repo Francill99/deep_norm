@@ -2,13 +2,12 @@
 """
 train_vit.py
 
-Train a lightweight Vision‑Transformer (ViT) on CIFAR‑10, CIFAR‑100
-or Tiny‑ImageNet using only P training samples for T epochs.
-
 Example:
     python train_vit.py --device cuda:0 --P 5000 --T 600 --lr 3e-4 --dataset CIFAR10
 """
-
+# -----------------------------------------------------------------------------#
+# Imports
+# -----------------------------------------------------------------------------#
 import argparse
 import os
 from pathlib import Path
@@ -23,7 +22,7 @@ import torchvision
 from torchvision.datasets import ImageFolder
 import torchvision.transforms as transforms
 
-from deep_norm.vit.model import ViT                 
+from deep_norm.vit.model import ViT               
 from deep_norm.train.training import train
 
 def parse_args():
@@ -36,6 +35,7 @@ def parse_args():
     p.add_argument("--dataset", choices=["MNIST","CIFAR10", "CIFAR100", "TINYIMAGENET"],
                    required=True)
     p.add_argument("--wdecay",  type=float, default=0.)
+    p.add_argument("--init_factor", type=float, default=1.0, help="Factor to multiply all weights at initialization")
     p.add_argument("--data_root", default="./data")
     p.add_argument("--out_dir",   default="./savings")
     return p.parse_args()
@@ -58,6 +58,7 @@ def load_datasets(name: str, root: str, transform):
     """
     root = Path(root)
 
+    # ------------------------------- MNIST ------------------------------------
     if name == "MNIST":
         tr = torchvision.datasets.MNIST(
             root, train=True,  download=False, transform=transform
@@ -67,6 +68,7 @@ def load_datasets(name: str, root: str, transform):
         )
         return tr, te, (1, 28, 28), 10
 
+    # ----------------------------- CIFAR‑10 -----------------------------------
     if name == "CIFAR10":
         tr = torchvision.datasets.CIFAR10(
             root, train=True,  download=False, transform=transform
@@ -76,6 +78,7 @@ def load_datasets(name: str, root: str, transform):
         )
         return tr, te, (3, 32, 32), 10
 
+    # ----------------------------- CIFAR‑100 ----------------------------------
     if name == "CIFAR100":
         tr = torchvision.datasets.CIFAR100(
             root, train=True,  download=False, transform=transform
@@ -84,7 +87,8 @@ def load_datasets(name: str, root: str, transform):
             root, train=False, download=False, transform=transform
         )
         return tr, te, (3, 32, 32), 100
-    
+
+    # --------------------------- Tiny‑ImageNet --------------------------------
     if name == "TINYIMAGENET":
         base  = os.path.join(root, "tiny-imagenet-200")
         trdir = os.path.join(base, "train")
@@ -92,7 +96,6 @@ def load_datasets(name: str, root: str, transform):
         tr = ImageFolder(trdir, transform=transform)
         te = ImageFolder(valim, transform=transform)
         return tr, te, (3, 64, 64), 200
-
 
     raise ValueError(f"Unknown dataset '{name}'.")
 
@@ -127,47 +130,44 @@ def get_transforms(name: str):
 
     raise ValueError(f"Unknown dataset '{name}'.")
 
-def build_model(input_size, num_classes, device, dataset):
-    """
-    Hyper‑parameters chosen to keep the model count <≈ 10 M while maintaining
-    strong accuracy; roughly ViT‑Tiny for CIFAR‑10, a mid‑tiny for CIFAR‑100,
-    and a small for Tiny‑ImageNet.
-    """
+def build_model(input_size, num_classes, device, dataset, initialization_factor):
+
     c, H, _ = input_size
 
     if dataset == "MNIST":
         model = ViT(
-            image_size = H,    
-            patch_size = 7,    
-            in_chans   = c,    
+            image_size = H,    # 28
+            patch_size = 7,    # 4×4 = 16 tokens
+            in_chans   = c,    # 1 channel
             embed_dim  = 128,
             depth      = 4,
             num_heads  = 4,
             mlp_ratio  = 4,
             dropout    = 0.,
-            num_classes= num_classes
+            num_classes= num_classes,
+            initialization_factor=initialization_factor,
         ).to(device)
         
     elif dataset == "CIFAR10":
-        
+        # 8×8 patches → 4×4 tokens (plus class) –> 6‑layer encoder
         model = ViT(image_size=H, patch_size=4, in_chans=c,
                     embed_dim=192, depth=6, num_heads=3,
                     mlp_ratio=4, dropout=0.,
-                    num_classes=num_classes).to(device)
+                    num_classes=num_classes,initialization_factor=initialization_factor).to(device)
 
     elif dataset == "CIFAR100":
-   
+        # Slightly wider/deeper – still <8 M params
         model = ViT(image_size=H, patch_size=4, in_chans=c,
                     embed_dim=256, depth=6, num_heads=4,
                     mlp_ratio=4, dropout=0.,
-                    num_classes=num_classes).to(device)
+                    num_classes=num_classes,initialization_factor=initialization_factor).to(device)
 
     elif dataset == "TINYIMAGENET":
- 
+        # 8×8 patches on 64×64 images (64 tokens) – small ViT
         model = ViT(image_size=H, patch_size=4, in_chans=c,
                     embed_dim=384, depth=6, num_heads=6,
                     mlp_ratio=4, dropout=0.,
-                    num_classes=num_classes).to(device)
+                    num_classes=num_classes,initialization_factor=initialization_factor).to(device)
     else:
         raise ValueError(dataset)
     return model
@@ -183,7 +183,7 @@ def main():
     tr_ds, te_ds, input_size, num_classes = load_datasets(
         args.dataset, args.data_root, transform)
 
-
+    # train/val split
     P = min(args.P, len(tr_ds))
     tr_size, val_size = P, len(tr_ds) - P
     train_set, val_set = random_split(tr_ds, [tr_size, val_size])
@@ -192,15 +192,15 @@ def main():
     val_loader   = DataLoader(val_set,   batch_size=128, shuffle=False, num_workers=4)
     test_loader  = DataLoader(te_ds,     batch_size=128, shuffle=False, num_workers=4)
 
-    model     = build_model(input_size, num_classes, device, args.dataset)
+    model     = build_model(input_size, num_classes, device, args.dataset, args.init_factor)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wdecay)
     loss_fn   = nn.CrossEntropyLoss()
 
     logs = train(model, train_loader, val_loader, test_loader,
-                 device, optimizer, loss_fn, args.P, args.T)
+                 device, optimizer, loss_fn, args.P, args.T, other_norms=True, norms_every_steps=None)
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
-    np.save(Path(args.out_dir) / f"ViT_{args.dataset}_P{args.P}_seed{args.seed}_WD{args.wdecay}.npy",
+    np.save(Path(args.out_dir) / f"ViT_{args.dataset}_P{args.P}_seed{args.seed}_WD{args.wdecay}_INIT{args.init_factor}.npy",
             logs)
     print("Finished training. Logs saved.")
 

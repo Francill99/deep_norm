@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
 """
-train_model.py
-
-Train a CNNClassifier (from deep_norm) on MNIST, CIFAR‑10/100, or Tiny‑ImageNet
-using a subset of P training samples for T epochs.
-
-You *must* run download_datasets.py once beforehand so the datasets are already
-stored locally; subsequent training runs will therefore avoid any network fetch
-and start immediately.
 
 Example:
     python train_model.py --device cuda:0 --P 5000 --T 1000 --lr 1e-3 --dataset CIFAR10
@@ -30,9 +22,6 @@ from deep_norm.cnn.model import CNNClassifier
 from deep_norm.train.training import train
 
 
-# -----------------------------------------------------------------------------
-# CLI
-# -----------------------------------------------------------------------------
 
 def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -44,6 +33,7 @@ def parse_args():
     parser.add_argument("--dataset", choices=["MNIST", "CIFAR10", "CIFAR100", "TINYIMAGENET"], required=True,
                         help="Which dataset to use")
     parser.add_argument("--wdecay", type=float, default=0., help="Weight decay")
+    parser.add_argument("--init_factor", type=float, default=1.0, help="Factor to multiply all weights at initialization")
     parser.add_argument("--data_root", default="./data", help="Root folder **already** containing the datasets")
     parser.add_argument("--out_dir", default="./savings", help="Where to store the numpy log file")
     return parser.parse_args()
@@ -56,6 +46,7 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
 
 def get_transforms(name: str):
     if name == "MNIST":
@@ -112,7 +103,6 @@ def load_datasets(name: str, root: str, transform):
 
 def compute_random_margins(model: nn.Module, dataset, P_margins: int, device: str,
                            batch_size: int = 256) -> np.ndarray:
-    """Draw *P_margins* random indices without replacement and compute margins."""
     P_margins = min(P_margins, len(dataset))
     idx = torch.randperm(len(dataset))[:P_margins]
     subset = Subset(dataset, idx)
@@ -127,51 +117,57 @@ def compute_random_margins(model: nn.Module, dataset, P_margins: int, device: st
     return torch.cat(margins, dim=0).numpy()
 
 
-def build_model(input_size, num_classes, device, dataset):
+
+def build_model(input_size, num_classes, device, dataset, initialization_factor):
     """
     Dataset-specific CNNs tuned for best offline baselines:
-      • CIFAR-10 or MNIST: 3 conv-blocks with 32→64→128 filters, moderate dropout
+      • CIFAR-10: 3 conv-blocks with 32→64→128 filters, moderate dropout
       • CIFAR-100: 4 conv-blocks with 64→128→256→512 filters, stronger dropout
       • TinyImageNet: 4 conv-blocks (32→32→64→64→128), heavy FC head + high dropout
     """
     c_in = input_size[0]
 
     if dataset == "CIFAR10" or dataset== "MNIST":
+        # Two conv layers per pooling block; pool every 2 convs
         model = CNNClassifier(
-            conv_channels=[c_in, 32, 64, 128],    
+            conv_channels=[c_in, 32, 64, 128],    # 3 blocks: 32→64→128 filters 
             kernel_size=3,
-            mlp_layers=[512, num_classes],        
-            pool_every=2,                        
-            dropout=0.,                          
+            mlp_layers=[512, num_classes],        # 512-dim hidden → 10 classes
+            pool_every=2,                         # pool after every 2 convs 
+            dropout=0.,                          # 30% dropout (best at 20–40%) 
             input_size=input_size,
+            initialization_factor=initialization_factor,
         ).to(device)
 
     elif dataset == "CIFAR100":
-       
+        # Four conv blocks, doubling channels each time
         model = CNNClassifier(
-            conv_channels=[c_in, 64, 128, 256, 512],  
+            conv_channels=[c_in, 64, 128, 256, 512],  # 4 blocks 
             kernel_size=3,
-            mlp_layers=[1024, 512, num_classes],     
-            pool_every=2,                            
-            dropout=0.1,                             
+            mlp_layers=[1024, 512, num_classes],     # wider FC
+            pool_every=2,                            # pool every two conv layers 
+            dropout=0.1,                             # stronger dropout for 100 classes 
             input_size=input_size,
+            initialization_factor=initialization_factor
         ).to(device)
 
     elif dataset == "TINYIMAGENET":
-       
+        # TinyImageNet baseline
         model = CNNClassifier(
-            conv_channels=[c_in, 32, 32, 64, 64, 128],  
+            conv_channels=[c_in, 32, 32, 64, 64, 128],  # M4: 32→32→64→64→128 
             kernel_size=3,
-            mlp_layers=[2048, 1024, 512, num_classes],  
-            pool_every=2,                              
-            dropout=0.2,                               
+            mlp_layers=[2048, 1024, 512, num_classes],  # deep head for 200-way
+            pool_every=2,                              # as in M4 architecture 
+            dropout=0.2,                               # 50% dropout on FC layers 
             input_size=input_size,
+            initialization_factor=initialization_factor
         ).to(device)
 
     else:
         raise ValueError(f"Unknown dataset {dataset!r}")
 
     return model
+
 
 def main():
     args = parse_args()
@@ -191,15 +187,17 @@ def main():
     val_loader = DataLoader(val_set, batch_size=128, shuffle=False, num_workers=4)
     test_loader = DataLoader(test_ds, batch_size=128, shuffle=False, num_workers=4)
 
-    model = build_model(input_size, num_classes, device, args.dataset)
+    model = build_model(input_size, num_classes, device, args.dataset, args.init_factor)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wdecay)
+    #optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.wdecay)
     criterion = nn.CrossEntropyLoss()
 
-    logs = train(model, train_loader, val_loader, test_loader, device, optimizer, criterion, args.P, args.T)
+    logs = train(model, train_loader, val_loader, test_loader, device, optimizer, criterion, args.P, args.T, other_norms=True, norms_every_steps=None)
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
-    np.save(Path(args.out_dir) / f"CNN_{args.dataset}_P{args.P}_seed{args.seed}_WD{args.wdecay}.npy", logs)
-    print("Training complete. Logs saved to", Path(args.out_dir) / f"CNN_{args.dataset}_P{args.P}_seed{args.seed}_WD{args.wdecay}.npy")
+    name_file_save = f"CNN_{args.dataset}_P{args.P}_seed{args.seed}_WD{args.wdecay}_INIT{args.init_factor}.npy"
+    np.save(Path(args.out_dir) / name_file_save , logs)
+    print("Training complete. Logs saved to", Path(args.out_dir) / name_file_save)
 
 
 if __name__ == "__main__":

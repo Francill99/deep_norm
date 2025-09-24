@@ -2,12 +2,6 @@
 """
 train_resnet.py
 
-Train a ResNetClassifier (from deep_norm) on CIFAR‑10, CIFAR‑100, or Tiny‑ImageNet
-using precisely tuned hyper‑parameters for each dataset.
-
-Before running, make sure you have executed *download_datasets.py* so the datasets
-are cached locally – this avoids network fetches on subsequent runs.
-
 Example:
     python train_resnet.py --device cuda:0 --P 20000 --T 400 --dataset CIFAR100
 """
@@ -26,9 +20,9 @@ import torchvision
 from torchvision.datasets import ImageFolder
 import torchvision.transforms as transforms
 
+
 from deep_norm.resnet.model import ResNetClassifier, BasicBlock  
 from deep_norm.train.training import train  
-
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -42,11 +36,12 @@ def parse_args():
     p.add_argument("--seed", type=int, default=5, help="Seed")
     p.add_argument(
         "--dataset",
-        choices=["MNIST","CIFAR10", "CIFAR100", "TINYIMAGENET"],
+        choices=["MNIST", "CIFAR10", "CIFAR100", "TINYIMAGENET"],
         required=True,
         help="Dataset to use",
     )
     p.add_argument("--wdecay", type=float, default=0., help="Weight decay")
+    p.add_argument("--init_factor", type=float, default=1.0, help="Factor to multiply all weights at initialization")
     p.add_argument("--data_root", default="./data", help="Root folder **already** containing the datasets")
     p.add_argument("--out_dir", default="./savings", help="Where to store the numpy log file")
     return p.parse_args()
@@ -60,12 +55,15 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
+
 def get_transforms(name: str):
     if name == "MNIST":
         return transforms.Compose([
+            transforms.RandomAffine(degrees=10, translate=(0.1, 0.1)),
             transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
+            transforms.Normalize((0.1307,), (0.3081,)),
         ])
+    
     if name in {"CIFAR10", "CIFAR100"}:
         mean = (0.4914, 0.4822, 0.4465)
         std = (0.2023, 0.1994, 0.2010)
@@ -121,30 +119,43 @@ def load_datasets(name: str, root: str, transform):
 
     raise ValueError
 
+
 def dataset_presets(name: str):
     """Return (layers, widths, epochs, lr, batch_size, weight_decay, dropout)."""
-    if name == "CIFAR10" or name== "MNIST":
-        return ([2, 2, 2, 2], [64, 128, 256, 512], 350, 1e-3, 128, 5e-4, 0.0)
+    if name == "MNIST":
+        return ([2, 2, 2, 2],     # BasicBlock repeats per stage
+                [16, 32, 64, 128], # channel widths
+                50,                # epochs
+                1e-3,              # learning rate
+                128,               # batch size
+                5e-4,              # weight decay
+                0.0,
+                1)               # dropout
+    if name == "CIFAR10":
+        return ([2, 2, 2, 2], [64, 128, 256, 512], 350, 1e-3, 128, 5e-4, 0.0,3)
     if name == "CIFAR100":
-        return ([3, 4, 6, 3], [64, 128, 256, 512], 400, 1e-3, 128, 5e-4, 0.0)
+        return ([3, 4, 6, 3], [64, 128, 256, 512], 400, 1e-3, 128, 5e-4, 0.0,3)
     if name == "TINYIMAGENET":
-        return ([3, 4, 6, 3], [64, 128, 256, 512], 150, 3e-4, 256, 1e-4, 0.0)
+        return ([3, 4, 6, 3], [64, 128, 256, 512], 150, 3e-4, 256, 1e-4, 0.0,3)
     raise ValueError
 
 def build_model(
     input_size: Tuple[int, int, int],
     num_classes: int,
     dataset: str,
+    in_channels:int,
     device: torch.device,
+    initialization_factor: int,
 ):
-    layers, widths, _, _, batch_size, _, dropout = dataset_presets(dataset)
+    layers, widths, _, _, batch_size, _, dropout, in_channels = dataset_presets(dataset)
     model = ResNetClassifier(
         layers=layers,
         widths=widths,
         block=BasicBlock,
+        in_channels=in_channels,
         num_classes=num_classes,
         dropout=dropout,
-        input_size=input_size,
+        initialization_factor=initialization_factor,
     ).to(device)
     return model
 
@@ -154,13 +165,15 @@ def main():
 
     set_seed(args.seed)
 
-    layers, widths, _, _, batch_size, _, _ = dataset_presets(args.dataset)
+    # fetch dataset‑specific presets
+    layers, widths, _, _, batch_size, _, _ , in_channels= dataset_presets(args.dataset)
     epochs = args.T
     lr = args.lr 
 
     transform = get_transforms(args.dataset)
     train_ds, test_ds, input_size, num_classes = load_datasets(args.dataset, args.data_root, transform)
 
+    # Train/validation split
     p = min(args.P, len(train_ds))
     train_size, val_size = p, len(train_ds) - p
     train_set, val_set = random_split(train_ds, [train_size, val_size])
@@ -169,18 +182,17 @@ def main():
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=4)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=4)
 
-    model = build_model(input_size, num_classes, args.dataset, device)
+    model = build_model(input_size, num_classes, args.dataset, in_channels, device, initialization_factor=args.init_factor)
 
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=args.wdecay)
     criterion = nn.CrossEntropyLoss()
 
-    logs = train(model, train_loader, val_loader, test_loader, device, optimizer, criterion, args.P, epochs)
+    logs = train(model, train_loader, val_loader, test_loader, device, optimizer, criterion, args.P, epochs, other_norms=True, norms_every_steps=None)
 
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
-    save_path = Path(args.out_dir) / f"ResNet_{args.dataset}_P{args.P}_seed{args.seed}_WD{args.wdecay}.npy"
+    save_path = Path(args.out_dir) / f"ResNet_{args.dataset}_P{args.P}_seed{args.seed}_WD{args.wdecay}_INIT{args.init_factor}.npy"
     np.save(save_path, logs)
     print("Training complete. Logs saved to", save_path)
-
 
 if __name__ == "__main__":
     main()
